@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { searchFoods } from "@/actions/meals";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Search, Sparkles, Loader2 } from "lucide-react";
 import type { FoodItem } from "@/types/database";
 
 interface FoodSearchProps {
@@ -14,6 +15,7 @@ export function FoodSearch({ onSelect }: FoodSearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     if (query.length < 1) {
@@ -30,6 +32,49 @@ export function FoodSearch({ onSelect }: FoodSearchProps) {
 
     return () => clearTimeout(timeout);
   }, [query]);
+
+  const handleAIGenerate = async () => {
+    setIsGenerating(true);
+    try {
+      const res = await fetch("/api/generate-food", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ foodName: query }),
+      });
+
+      if (!res.ok) {
+        const { error } = await res.json();
+        alert(error || "AI 생성에 실패했습니다");
+        setIsGenerating(false);
+        return;
+      }
+
+      const food = await res.json();
+      const aiFoodItem: FoodItem = {
+        id: `ai-${Date.now()}`,
+        name: food.name || query,
+        category: "AI 생성",
+        serving_size: food.serving_size || 0,
+        serving_unit: food.serving_unit || "g",
+        calories: food.calories,
+        protein_g: food.protein_g,
+        carbs_g: food.carbs_g,
+        fat_g: food.fat_g,
+        fiber_g: 0,
+        sodium_mg: 0,
+        is_custom: true,
+        user_id: null,
+        created_at: new Date().toISOString(),
+      };
+
+      onSelect(aiFoodItem);
+      setQuery("");
+      setResults([]);
+    } catch {
+      alert("네트워크 오류가 발생했습니다");
+    }
+    setIsGenerating(false);
+  };
 
   return (
     <div className="space-y-3">
@@ -75,9 +120,28 @@ export function FoodSearch({ onSelect }: FoodSearchProps) {
         </div>
       )}
       {query.length >= 1 && !isSearching && results.length === 0 && (
-        <p className="text-sm text-muted-foreground text-center">
-          검색 결과가 없습니다
-        </p>
+        <div className="space-y-2 text-center">
+          <p className="text-sm text-muted-foreground">검색 결과가 없습니다</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleAIGenerate}
+            disabled={isGenerating}
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                AI 생성 중...
+              </>
+            ) : (
+              <>
+                <Sparkles className="mr-2 h-4 w-4" />
+                &quot;{query}&quot; AI로 영양정보 생성
+              </>
+            )}
+          </Button>
+        </div>
       )}
     </div>
   );

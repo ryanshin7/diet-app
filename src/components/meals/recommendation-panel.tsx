@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, Plus, Check } from "lucide-react";
 import { MEAL_LABEL, type MealType } from "@/lib/constants";
+import { quickAddMealLog } from "@/actions/meals";
+import { toast } from "sonner";
 
 interface Props {
   remaining: {
@@ -18,15 +20,67 @@ interface Props {
   };
 }
 
+interface ParsedFood {
+  name: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+function parseRecommendations(text: string): ParsedFood[] {
+  const foods: ParsedFood[] = [];
+  const blocks = text.split(/\*\*/).filter(Boolean);
+
+  for (let i = 0; i < blocks.length; i++) {
+    const nameBlock = blocks[i];
+    const name = nameBlock.split("\n")[0].replace(/\*+/g, "").trim();
+    if (!name || name.length > 50) continue;
+
+    const nextBlock = blocks[i + 1] || "";
+    const combined = nameBlock + nextBlock;
+
+    const calMatch = combined.match(/칼로리[:\s]*~?(\d+)/);
+    const proMatch = combined.match(/단백질[:\s]*~?(\d+)/);
+    const carbMatch = combined.match(/탄수화물[:\s]*~?(\d+)/);
+    const fatMatch = combined.match(/지방[:\s]*~?(\d+)/);
+
+    if (calMatch) {
+      foods.push({
+        name,
+        calories: parseInt(calMatch[1]),
+        protein: proMatch ? parseInt(proMatch[1]) : 0,
+        carbs: carbMatch ? parseInt(carbMatch[1]) : 0,
+        fat: fatMatch ? parseInt(fatMatch[1]) : 0,
+      });
+    }
+  }
+
+  return foods;
+}
+
 export function RecommendationPanel({ remaining }: Props) {
   const [mealType, setMealType] = useState<MealType>("lunch");
   const [preferences, setPreferences] = useState("");
   const [response, setResponse] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [parsedFoods, setParsedFoods] = useState<ParsedFood[]>([]);
+  const [registeredIndexes, setRegisteredIndexes] = useState<Set<number>>(
+    new Set()
+  );
+  const [registeringIndex, setRegisteringIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isLoading && response && !response.startsWith("오류")) {
+      setParsedFoods(parseRecommendations(response));
+    }
+  }, [isLoading, response]);
 
   const handleRecommend = useCallback(async () => {
     setIsLoading(true);
     setResponse("");
+    setParsedFoods([]);
+    setRegisteredIndexes(new Set());
 
     try {
       const res = await fetch("/api/recommend-meal", {
@@ -63,9 +117,7 @@ export function RecommendationPanel({ remaining }: Props) {
             try {
               const data = JSON.parse(line.slice(6));
               if (data.error) {
-                setResponse(
-                  `오류: ${data.error.includes("credit balance") ? "API 크레딧이 부족합니다. Anthropic 콘솔에서 크레딧을 충전해주세요." : data.error}`
-                );
+                setResponse(`오류: ${data.error}`);
                 setIsLoading(false);
                 return;
               }
@@ -82,6 +134,26 @@ export function RecommendationPanel({ remaining }: Props) {
 
     setIsLoading(false);
   }, [remaining, mealType, preferences]);
+
+  const handleRegister = async (food: ParsedFood, index: number) => {
+    setRegisteringIndex(index);
+    const result = await quickAddMealLog({
+      food_name: food.name,
+      meal_type: mealType,
+      calories: food.calories,
+      protein_g: food.protein,
+      carbs_g: food.carbs,
+      fat_g: food.fat,
+    });
+
+    if (result.error) {
+      toast.error(result.error);
+    } else {
+      toast.success(`${food.name}이(가) ${MEAL_LABEL[mealType]}에 등록되었습니다`);
+      setRegisteredIndexes((prev) => new Set(prev).add(index));
+    }
+    setRegisteringIndex(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -174,6 +246,52 @@ export function RecommendationPanel({ remaining }: Props) {
         </CardContent>
       </Card>
 
+      {/* Parsed Food Cards with Register Buttons */}
+      {parsedFoods.length > 0 && !isLoading && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">추천 음식 바로 등록</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {parsedFoods.map((food, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between rounded-lg border p-3"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{food.name}</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {food.calories}kcal · 단 {food.protein}g · 탄{" "}
+                    {food.carbs}g · 지 {food.fat}g
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant={registeredIndexes.has(i) ? "secondary" : "default"}
+                  disabled={registeredIndexes.has(i) || registeringIndex === i}
+                  onClick={() => handleRegister(food, i)}
+                  className="ml-3 shrink-0"
+                >
+                  {registeringIndex === i ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : registeredIndexes.has(i) ? (
+                    <>
+                      <Check className="mr-1 h-4 w-4" />
+                      등록됨
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="mr-1 h-4 w-4" />
+                      등록
+                    </>
+                  )}
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Streaming Response */}
       {(response || isLoading) && (
         <Card>
@@ -184,7 +302,9 @@ export function RecommendationPanel({ remaining }: Props) {
             <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap">
               {response}
               {isLoading && !response && (
-                <span className="text-muted-foreground">추천을 생성하고 있습니다...</span>
+                <span className="text-muted-foreground">
+                  추천을 생성하고 있습니다...
+                </span>
               )}
               {isLoading && response && (
                 <span className="animate-pulse">|</span>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useActionState } from "react";
-import { addMealLog } from "@/actions/meals";
+import { useState } from "react";
+import { quickAddMealLog } from "@/actions/meals";
 import {
   Dialog,
   DialogContent,
@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FoodSearch } from "@/components/meals/food-search";
 import { MEAL_LABEL, type MealType } from "@/lib/constants";
+import { toast } from "sonner";
 import type { FoodItem } from "@/types/database";
 
 export function MealLogDialog({ children }: { children: React.ReactNode }) {
@@ -28,18 +29,8 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
   const [manualProtein, setManualProtein] = useState("0");
   const [manualCarbs, setManualCarbs] = useState("0");
   const [manualFat, setManualFat] = useState("0");
-
-  const [state, formAction, isPending] = useActionState(
-    async (prevState: unknown, formData: FormData) => {
-      const result = await addMealLog(prevState, formData);
-      if (result?.success) {
-        setOpen(false);
-        resetForm();
-      }
-      return result;
-    },
-    null
-  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const resetForm = () => {
     setSelectedFood(null);
@@ -50,9 +41,59 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
     setManualProtein("0");
     setManualCarbs("0");
     setManualFat("0");
+    setError(null);
   };
 
   const count = Number(servingCount) || 1;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
+
+    let foodName: string;
+    let calories: number;
+    let protein_g: number;
+    let carbs_g: number;
+    let fat_g: number;
+
+    if (manualMode) {
+      foodName = manualName;
+      calories = Number(manualCalories) || 0;
+      protein_g = Number(manualProtein) || 0;
+      carbs_g = Number(manualCarbs) || 0;
+      fat_g = Number(manualFat) || 0;
+    } else if (selectedFood) {
+      foodName = selectedFood.name;
+      calories = Math.round(Number(selectedFood.calories) * count);
+      protein_g = Math.round(Number(selectedFood.protein_g) * count);
+      carbs_g = Math.round(Number(selectedFood.carbs_g) * count);
+      fat_g = Math.round(Number(selectedFood.fat_g) * count);
+    } else {
+      setIsSubmitting(false);
+      return;
+    }
+
+    const result = await quickAddMealLog({
+      food_name: foodName,
+      meal_type: mealType,
+      calories,
+      protein_g,
+      carbs_g,
+      fat_g,
+    });
+
+    if (result?.error) {
+      setError(result.error);
+      setIsSubmitting(false);
+      return;
+    }
+
+    toast.success(`${foodName}이(가) ${MEAL_LABEL[mealType]}에 기록되었습니다`);
+    setOpen(false);
+    resetForm();
+    setIsSubmitting(false);
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -62,14 +103,7 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
           <DialogTitle>식사 기록</DialogTitle>
         </DialogHeader>
 
-        <form action={formAction} className="space-y-4">
-          <input
-            type="hidden"
-            name="log_date"
-            value={new Date().toISOString().split("T")[0]}
-          />
-          <input type="hidden" name="meal_type" value={mealType} />
-
+        <form onSubmit={handleSubmit} className="space-y-4">
           {/* Meal Type Tabs */}
           <Tabs
             value={mealType}
@@ -109,41 +143,9 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
                     </Button>
                   </div>
 
-                  <input
-                    type="hidden"
-                    name="food_item_id"
-                    value={selectedFood.id}
-                  />
-                  <input
-                    type="hidden"
-                    name="food_name"
-                    value={selectedFood.name}
-                  />
-                  <input
-                    type="hidden"
-                    name="calories"
-                    value={selectedFood.calories}
-                  />
-                  <input
-                    type="hidden"
-                    name="protein_g"
-                    value={selectedFood.protein_g}
-                  />
-                  <input
-                    type="hidden"
-                    name="carbs_g"
-                    value={selectedFood.carbs_g}
-                  />
-                  <input
-                    type="hidden"
-                    name="fat_g"
-                    value={selectedFood.fat_g}
-                  />
-
                   <div className="space-y-2">
                     <Label>인분</Label>
                     <Input
-                      name="serving_count"
                       type="number"
                       value={servingCount}
                       onChange={(e) => setServingCount(e.target.value)}
@@ -196,19 +198,16 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
                 <div className="space-y-2">
                   <Label>음식 이름</Label>
                   <Input
-                    name="food_name"
                     value={manualName}
                     onChange={(e) => setManualName(e.target.value)}
                     placeholder="음식 이름을 입력하세요"
                     required
                   />
                 </div>
-                <input type="hidden" name="serving_count" value="1" />
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>칼로리 (kcal)</Label>
                     <Input
-                      name="calories"
                       type="number"
                       value={manualCalories}
                       onChange={(e) => setManualCalories(e.target.value)}
@@ -219,7 +218,6 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
                   <div className="space-y-2">
                     <Label>단백질 (g)</Label>
                     <Input
-                      name="protein_g"
                       type="number"
                       value={manualProtein}
                       onChange={(e) => setManualProtein(e.target.value)}
@@ -228,7 +226,6 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
                   <div className="space-y-2">
                     <Label>탄수화물 (g)</Label>
                     <Input
-                      name="carbs_g"
                       type="number"
                       value={manualCarbs}
                       onChange={(e) => setManualCarbs(e.target.value)}
@@ -237,7 +234,6 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
                   <div className="space-y-2">
                     <Label>지방 (g)</Label>
                     <Input
-                      name="fat_g"
                       type="number"
                       value={manualFat}
                       onChange={(e) => setManualFat(e.target.value)}
@@ -255,9 +251,9 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
             </>
           )}
 
-          {state?.error && (
+          {error && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-              {state.error}
+              {error}
             </div>
           )}
 
@@ -265,12 +261,12 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
             type="submit"
             className="w-full"
             disabled={
-              isPending ||
+              isSubmitting ||
               (!manualMode && !selectedFood) ||
               (manualMode && (!manualName || !manualCalories))
             }
           >
-            {isPending ? "기록 중..." : "기록하기"}
+            {isSubmitting ? "기록 중..." : "기록하기"}
           </Button>
         </form>
       </DialogContent>
