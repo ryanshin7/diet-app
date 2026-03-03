@@ -1,10 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest } from "next/server";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 const SYSTEM_PROMPT = `당신은 한국식 식단 관리 전문 영양사입니다. 사용자의 남은 칼로리와 영양소 목표에 맞는 한국 음식을 추천해주세요.
 
@@ -61,38 +59,56 @@ ${preferences ? `- 선호사항: ${preferences}` : ""}
 
 이 조건에 맞는 한국 음식을 3가지 추천해주세요.`;
 
-  const stream = anthropic.messages.stream({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
-  });
+  try {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      systemInstruction: SYSTEM_PROMPT,
+    });
 
-  const encoder = new TextEncoder();
-  const readable = new ReadableStream({
-    async start(controller) {
-      for await (const event of stream) {
-        if (
-          event.type === "content_block_delta" &&
-          event.delta.type === "text_delta"
-        ) {
+    const result = await model.generateContentStream(userMessage);
+
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of result.stream) {
+            const text = chunk.text();
+            if (text) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ text })}\n\n`
+                )
+              );
+            }
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        } catch (streamError) {
+          const message =
+            streamError instanceof Error
+              ? streamError.message
+              : "스트리밍 중 오류가 발생했습니다.";
           controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ text: event.delta.text })}\n\n`
-            )
+            encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`)
           );
+          controller.close();
         }
-      }
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
+      },
+    });
 
-  return new Response(readable, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "AI 추천 중 오류가 발생했습니다.";
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 }

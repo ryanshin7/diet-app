@@ -61,8 +61,15 @@ export function RecommendationPanel({ remaining }: Props) {
         for (const line of lines) {
           if (line.startsWith("data: ") && line !== "data: [DONE]") {
             try {
-              const { text } = JSON.parse(line.slice(6));
-              setResponse((prev) => prev + text);
+              const data = JSON.parse(line.slice(6));
+              if (data.error) {
+                setResponse(
+                  `오류: ${data.error.includes("credit balance") ? "API 크레딧이 부족합니다. Anthropic 콘솔에서 크레딧을 충전해주세요." : data.error}`
+                );
+                setIsLoading(false);
+                return;
+              }
+              setResponse((prev) => prev + data.text);
             } catch {
               // ignore parse errors
             }
