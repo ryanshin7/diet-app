@@ -53,6 +53,7 @@ export function FoodSearch({ onSelect }: FoodSearchProps) {
       const aiFoodItem: FoodItem = {
         id: `ai-${Date.now()}`,
         name: food.name || query,
+        name_en: null,
         category: "AI 생성",
         serving_size: food.serving_size || 0,
         serving_unit: food.serving_unit || "g",
