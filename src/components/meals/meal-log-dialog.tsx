@@ -149,7 +149,7 @@ export function MealLogDialog({ children }: { children: React.ReactNode }) {
                       type="number"
                       value={servingCount}
                       onChange={(e) => setServingCount(e.target.value)}
-                      min={0.1}
+                      min={0.5}
                       max={20}
                       step={0.5}
                     />
